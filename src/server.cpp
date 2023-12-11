@@ -1,21 +1,31 @@
 #include "../include/server.h"
 
+#include <bits/types/siginfo_t.h>
+#include <csignal>
 #include <cstdio>
 #include <cstdlib>
+#include <iostream>
 #include <pthread.h>
+#include <string>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
 #include <arpa/inet.h>
+#include <system_error>
 #include <unistd.h>
 #include <signal.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <thread>
+#include <functional>
+#include <mutex>
 
 #define IPSIZE 16
 #define BUFSIZE 1024
+volatile sig_atomic_t sigFlag = 0;
+std::mutex mtx_map; // 对服务器的状态管理进行加锁
 
 // 服务器的构造函数，用于指定服务器的ip以及端口
 Server::Server(const std::string ip){
@@ -28,8 +38,9 @@ Server::~Server(){
 }
 
 // 捕捉信号SIGINT之后，执行自定义的动作
-void sig_int(size_int_t){
+void sig_int(size_int_t sig, siginfo_t *info, void *context){
     sigFlag = 1;
+    std::cout << sigFlag << std::endl;
 }
 
 // 捕捉信号SIGQUIT之后，执行自定义的动作
@@ -39,12 +50,20 @@ void sig_quit(size_int_t){
 
 // 服务器注册信号行为
 void Server::registerSignal(){
-    if (signal(SIGINT, SIG_IGN) != SIG_IGN) {
-        signal(SIGINT, sig_int);
-    }
-    if (signal(SIGQUIT, SIG_IGN) != SIG_IGN) {
-        signal(SIGQUIT, sig_quit);
-    }
+    // if (signal(SIGINT, SIG_IGN) != SIG_IGN) {
+    // signal(SIGINT, sig_int);
+    // }
+    // if (signal(SIGQUIT, SIG_IGN) != SIG_IGN) {
+    //     signal(SIGQUIT, sig_quit);
+    // }
+
+    // 设置信号处理函数
+    struct sigaction sa;
+    sa.sa_sigaction = sig_int;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_SIGINFO;
+    sa.sa_restorer = NULL;
+    sigaction(SIGINT, &sa, NULL);
 }
 
 // 创建socket套接字IP是定的，需要传端口
@@ -88,14 +107,58 @@ void response(size_int_t newsd){
     }
 }
 
+void* Server::conn(size_int_t newsd, struct sockaddr_in &raddr){
+    char buf[BUFSIZE];
+    char ipbuf[IPSIZE]; // 用于记录请求连接的客户端ip从二进制转成字符串
+    inet_ntop(AF_INET, &raddr.sin_addr.s_addr, ipbuf, sizeof(ipbuf));
+    size_int_t num = read(newsd, buf, BUFSIZE);
+    std::string strs(buf, num - 1);
+    if (strs == "CONNECT") {
+        // 表示新的客户端请求加入
+        response(newsd); // 返回给客户端已收到的信息
+        // 往服务器的客户端状态记录器中写入信息
+        // 加锁
+        mtx_map.lock();
+        ClientStateNode node;
+        std::string colon = ":";
+        node.name = ipbuf + colon + std::to_string(ntohs(raddr.sin_port));
+        node.linkState = 1;
+        node.isBusy = 0;
+        if (clientStateMap.find(node.name) != clientStateMap.end()) { // 请求连接的客户端之前连接过
+            // std::cout << ipbuf << " 之前连接过\n" << std::endl;
+            ClientStateNode temp = clientStateMap.at(node.name);
+            node.linkCount = temp.linkCount + 1;
+            node.clientPort = ntohs(raddr.sin_port);
+            // std::cout << "SERVER from CLIENT: " << ipbuf << ":" << ntohs(raddr.sin_port) << std::endl;
+        }else { // 请求连接的客户端之前没有连接过服务器
+            node.linkCount = 1;
+            node.clientPort = ntohs(raddr.sin_port);
+        }
+        clientStateMap[node.name] = node;
+        // 解锁
+        mtx_map.unlock();
+    }
+    if (strs == "DESTORY") {
+        // 表示客户端请求撤出
+        // 加锁
+        response(newsd); // 返回给客户端已收到的信息
+        mtx_map.lock();
+        std::string colon = ":";
+        std::string name = ipbuf + colon + std::to_string(ntohs(raddr.sin_port));
+        ClientStateNode node = clientStateMap.at(name);
+        node.linkState = 0;
+        clientStateMap[node.name] = node;
+        // 解锁
+        mtx_map.unlock();
+    }
+    pthread_exit(0);
+}
+
 // 负责新加入的客户端的连接以及旧的客户端的撤销
-size_int_t Server::ConAndInvClient(const size_int_t port){
+void* Server::ConAndInvClient(Server &server, const size_int_t port){
     struct sockaddr_in raddr; // 记录客户端的连接信息，例如客户端的ip以及端口
     socklen_t len = sizeof(raddr);
     size_int_t newsd;
-    pid_t pid;
-    char buf[BUFSIZE];
-    char ipbuf[IPSIZE]; // 用于记录请求连接的客户端ip从二进制转成字符串
     size_int_t socket_d = createChannel(port);
     if (listen(socket_d, 50) < 0) { // 之所以把listen放在这里，是为了复用createChannel函数
         perror("listen()");
@@ -105,58 +168,23 @@ size_int_t Server::ConAndInvClient(const size_int_t port){
 
     while (true) { // 一直处于循环状态，用于接收来自客户端的连接请求，然后把和客户端的通信任务交给子进程
         newsd = accept(socket_d, (struct sockaddr *)&raddr, &len);
-        if (sigFlag == 1) {
-            perror("accept()"); // 打断了accept系统调用，accept会报错，检验是否报错
-            close(socket_d);
-            break;
-        }
+        // if (sigFlag == 1) {
+        //     perror("accept()"); // 打断了accept系统调用，accept会报错，检验是否报错
+        //     close(socket_d);
+        //     break;
+        // }
         if (newsd < 0) {
             perror("accept()");
             size_int_t state = 1;
             pthread_exit(&state);
         }
-        inet_ntop(AF_INET, &raddr.sin_addr.s_addr, ipbuf, sizeof(ipbuf));
-        std::cout << "SERVER from CLIENT: " << ipbuf << ":" << ntohs(raddr.sin_port);
-        pid = fork();
-        if (pid < 0) {
-            perror("fork()");
-            size_int_t state = 1;
-            pthread_exit(&state);
-        }
-        if (pid == 0) {
-            close(socket_d); // 子进程中关闭用于客户端请求连接的socket字
-            size_int_t num = read(newsd, buf, BUFSIZE);
-            std::string strs(buf, num - 1);
-            if (num == 0) break;
-            if (strs == "CONNECT") {
-                // 表示新的客户端请求加入
-                response(newsd); // 返回给客户端已收到的信息
-                // 往服务器的客户端状态记录器中写入信息
-                ClientStateNode node;
-                node.name = ipbuf;
-                node.linkState = 1;
-                node.isBusy = 0;
-                if (clientStateMap.find(node.name) != clientStateMap.end()) { // 请求连接的客户端之前连接过
-                    std::cout << ipbuf << " 之前连接过\n" << std::endl;
-                    ClientStateNode temp = clientStateMap.at(node.name);
-                    node.linkCount = temp.linkCount + 1;
-                }else { // 请求连接的客户端之前没有连接过服务器
-                    node.linkCount = 1;
-                }
-                clientStateMap[node.name] = node;
-            }
-            if (strs == "DESTORY") {
-                // 表示客户端请求撤出
-                ClientStateNode node = clientStateMap.at(ipbuf);
-                node.linkState = 0;
-                clientStateMap[node.name] = node;
-            }
-            exit(0); // 子进程中也有while循环，然后子进程只用执行通信不需要进行accept操作
-        }else {
-            close(newsd); // 父进程中关闭用于和客户端通信的socket字
-        }
+        
+        /**
+            创建子线程执行，不能创建子进程，因为父子进程所处的空间不同
+        */
+        std::thread t(&Server::conn, &server, std::ref(newsd), std::ref(raddr));
+        t.detach();
     }
-    wait(NULL); // 等待所有的子进程执行完成之后，再结束主线程
     size_int_t state = 0;
     pthread_exit(&state);
 }
@@ -204,6 +232,25 @@ size_int_t Server::distributeTasks(const std::string ip, const size_int_t port, 
     }
     close(socket_d);
     return 0;
+}
+
+// 任务分发策略
+size_int_t Server::distributeStrategy(const std::string taskPathName, const std::string pluginPathName){
+    // 遍历客户计数器找到一个在线而且没有在执行测试任务的客户端
+    size_int_t flag = 0; // 标志用于判断是不是找到了一个客户端，找到了flag是1，没有找到是0
+    for (auto it : clientStateMap) {
+        if (it.second.linkState == 1 and it.second.isBusy ==0) {
+            // 找到了一个符合条件的客户端
+            flag = 1;
+            // 给该客户端发送任务具体信息以及插件信息
+            distributeTasks(it.first, it.second.clientPort, taskPathName, pluginPathName);
+        }
+    }
+    if (flag == 0) {
+        // 没有找到一个满足条件的客户端
+        return 0;
+    }
+    return 1;
 }
 
 // 回收客户端执行完任务之后的结果回收
@@ -263,9 +310,18 @@ size_int_t Server::RecvResult(const size_int_t recvResultPort){
 
 // 展示所有客户端的状态
 size_int_t Server::getAllStates(){
+    std::cout << "客户端\t\t" << "连接状态\t" << "连接次数\t" << "是否活跃\n";
     for (auto it = clientStateMap.begin(); it != clientStateMap.end(); it++){
-        std::cout << "客户端\t" << "连接状态\t" << "连接次数\t" << "是否活跃\n";
-        std::cout << it->first << "\t" << it->second.linkState << "\t" << it->second.linkCount<< "\t" << it->second.isBusy << std::endl;
+        std::cout << it->first << "\t" << it->second.linkState << "\t\t" << it->second.linkCount<< "\t\t" << it->second.isBusy << std::endl;
+    }
+    return 0;
+}
+
+// 展示所有任务的状态
+size_int_t Server::showTasksStates(){
+    std::cout << "任务\t" << "分配状态(0:未分配,1:已分配)\t完成状态(0:未完成,1:已完成)\t插件名" << std::endl;
+    for (auto it : taskMap) {
+        std::cout << it.first << "\t\t" << it.second.isAssign << "\t\t\t\t" << it.second.isFinished << "\t\t\t" << it.second.pluginName << std::endl;
     }
     return 0;
 }
@@ -328,17 +384,24 @@ size_int_t Server::getStates(const size_int_t localport){
     return 0;
 }
 
-// 负责服务器五个线程的创建以及销毁
-size_int_t Server::threadCreat(){
-
-
+// 创建接收客户端连接以及撤销线程
+size_int_t createConnThread(Server &server, const size_int_t port){
+    try {
+        std::thread t(&Server::ConAndInvClient, &server, std::ref(server), port);
+        // t.join();
+        t.detach();
+        return 0;
+    }catch (const std::system_error &e) {
+        std::cerr << "Failed to create thread, which receves the connection and destruction from client: " << e.what() << std::endl;
+        return 1;
+    }
 }
 
 // 发送数据
-void sendData(size_int_t socket_d, std::string data){
-  int len = sizeof(data);
+void Server::sendData(size_int_t socket_d, std::string data){
+//   int len = sizeof(data);
   char buf[BUFSIZE];
-  long long i;
+  unsigned int i;
   for (i = 0; i < data.size(); i++) {
     if ((i % (BUFSIZE - 1) == 0) && (i != 0)) {
       buf[BUFSIZE - 1] = '\0';
@@ -363,4 +426,17 @@ void sendData(size_int_t socket_d, std::string data){
   }
   read(socket_d, buf, 4);
   puts(buf);
+}
+
+// 任务初始化
+void Server::tasksInit(){
+    TASK task1, task2;
+    task1.isAssign = 0;
+    task1.isFinished = 0;
+    task1.pluginName = "function1.so";
+    task2.isAssign = 0;
+    task2.isFinished = 0;
+    task2.pluginName = "function2.so";
+    taskMap["task1"] = task1;
+    taskMap["task2"] = task2;
 }

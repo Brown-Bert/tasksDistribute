@@ -1,8 +1,10 @@
 
 #include "../include/client.h"
 
+#include <asm-generic/socket.h>
 #include <cstdio>
 #include <cstdlib>
+#include <iostream>
 #include <pthread.h>
 #include <string>
 #include <sys/types.h>
@@ -11,14 +13,17 @@
 #include <netinet/in.h>
 #include <netinet/ip.h>
 #include <arpa/inet.h>
+#include <system_error>
 #include <unistd.h>
 #include <signal.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <thread>
+
 
 #define BUFSIZE 1024
 #define IPSIZE 16
-
+size_int_t sigFlag = 0;
 // 客户端的构造函数，指定客户端的ip
 Client::Client(const std::string ip){
     address = ip;
@@ -78,8 +83,16 @@ size_int_t Client::createChannel(const size_int_t port){
 
 // 客户端请求建立连接 ，向指定ip与端口发送信息
 size_int_t Client::ConnAndDestory(const size_int_t clientPort, const std::string serverIp, const size_int_t serverPort, const std::string data){
+
     struct sockaddr_in raddr;
     size_int_t socket_d = createChannel(clientPort);
+    // 需要判断所提供的套接字是不是已经是处于连通状态
+    struct sockaddr_storage addr;
+    socklen_t len = sizeof(addr);
+    int res = getsockname(socket_d, (struct sockaddr*)&addr, &len);
+    if (res == 0 && len !=0) {
+      return 1;
+    }
     raddr.sin_family = AF_INET;
     raddr.sin_port = htons(serverPort);
     inet_pton(AF_INET, serverIp.c_str(), &raddr.sin_addr.s_addr);
@@ -96,9 +109,9 @@ size_int_t Client::ConnAndDestory(const size_int_t clientPort, const std::string
 
 // 发送数据
 void Client::sendData(size_int_t socket_d, std::string data){
-  int len = sizeof(data);
+  // int len = sizeof(data);
   char buf[BUFSIZE];
-  long long i;
+  unsigned int i;
   for (i = 0; i < data.size(); i++) {
     if ((i % (BUFSIZE - 1) == 0) && (i != 0)) {
       buf[BUFSIZE - 1] = '\0';
@@ -258,3 +271,13 @@ size_int_t Client::createDaemon(const size_int_t daemonPort, const std::string s
   size_int_t state = 0;
   pthread_exit(&state);
 }
+
+// // 创建接收客户端连接以及撤销线程, 返回0代表线程创建成功，1代表线程创建失败
+// size_int_t createConnThread(Client &client, const size_int_t clientPort, const std::string serverIp, const size_int_t serverPort, const std::string data){
+//   try {
+//     std::thread t(&Client::ConnAndDestory, &client, clientPort, serverIp, serverPort, data);
+//   } catch (const std::system_error &e) {
+//     std::cerr << "Failed to create thread, which wants to connect and destory: " << e.what() << std::endl;
+//     return 1;
+//   }
+// }
