@@ -4,5 +4,5 @@
 
 
 extern "C" void myprint(std::string strs){
-    std::cout << "function2: " << strs << std::endl;
+    std::cout << "\nfunction2: " << strs << std::endl;
 }

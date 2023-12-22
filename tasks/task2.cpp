@@ -7,6 +7,7 @@
 #include <dlfcn.h>
 #include <dirent.h>
 #include <cstring>
+#include <unistd.h>
 
 int main(){
 
@@ -16,7 +17,7 @@ int main(){
         fprintf(stderr, "无法打开共享库：%s\n", dlerror());
         exit(1);
     }
-
+    sleep(20);
     typedef void (*myprint)(std::string);
     // 映射动态库中的计算行数的函数
     myprint print = (myprint)dlsym(handle, "myprint");

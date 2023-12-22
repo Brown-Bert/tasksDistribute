@@ -4,6 +4,8 @@
 #include <asm-generic/socket.h>
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
+#include <ios>
 #include <iostream>
 #include <pthread.h>
 #include <string>
@@ -127,7 +129,7 @@ void Client::sendData(size_int_t socket_d, std::string data){
         pthread_exit(&state);
       }
       read(socket_d, buf, 4);
-      puts(buf);
+      // puts(buf);
     }
     int index = i % (BUFSIZE - 1);
     buf[index] = data[i];
@@ -140,7 +142,7 @@ void Client::sendData(size_int_t socket_d, std::string data){
     pthread_exit(&state);
   }
   read(socket_d, buf, 4);
-  puts(buf);
+  // puts(buf);
 }
 
 // 客户端接受任务进行测试
@@ -148,6 +150,7 @@ size_int_t Client::acceptTask(const size_int_t port, const char* taskPathName, c
   struct sockaddr_in raddr; // 记录服务器的连接信息，例如服务器的ip以及端口
   socklen_t len = sizeof(raddr);
   size_int_t newsd;
+  std::string resName;
   char buf[BUFSIZE];
   char ipbuf[IPSIZE]; // 用于记录请求连接的服务端的ip从二进制转成字符串
   size_int_t socket_d = createChannel(port);
@@ -172,7 +175,7 @@ size_int_t Client::acceptTask(const size_int_t port, const char* taskPathName, c
     ConnAndDestory(0, daemonIp, daemonPort, "ACTIVE");
 
     inet_ntop(AF_INET, &raddr.sin_addr.s_addr, ipbuf, sizeof(ipbuf));
-    std::cout << "CLIENT from SERVER: " << ipbuf << ":" << ntohs(raddr.sin_port);
+    // std::cout << "CLIENT from SERVER: " << ipbuf << ":" << ntohs(raddr.sin_port);
     size_int_t flag = -1; // 用于标记当前收到的信息是具体的任务信息（0），还是传输的是插件信息（1）
     std::string taskName("./run/");
     std::string pluName("./plugins/");
@@ -203,6 +206,7 @@ size_int_t Client::acceptTask(const size_int_t port, const char* taskPathName, c
         response(newsd);
         std::string strs(buf, num - 1);
         taskName += strs;
+        resName = strs;
         task_fd = open(taskName.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0744); // 打开文件，写入任务信息
         if (task_fd < 0) {
           perror("task-open()");
@@ -275,6 +279,7 @@ size_int_t Client::acceptTask(const size_int_t port, const char* taskPathName, c
     // 测试任务完成
     std::system("rm ./plugins/* && rm ./run/*");
     ConnAndDestory(0, daemonIp, daemonPort, "UNACTIVE");
+    ConnAndDestory(0, daemonIp, daemonPort, resName);
   }
   // std::cout << "123456" << std::endl;
   size_int_t state = 0;
@@ -294,9 +299,8 @@ size_int_t Client::createDaemon(const size_int_t daemonPort, const std::string s
       pthread_exit(&state);
   }
   std::string logPathName = "log.txt"; // 守护进程脱离终端，所以把打印信息输出到日志文件中
-  size_int_t log_fd = open(logPathName.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644);
-  if (log_fd < 0) {
-    perror("log-open()");
+  std::ofstream ofs(logPathName, std::ios::app);
+  if (!ofs.is_open()){
     size_int_t state = 1;
     pthread_exit(&state);
   }
@@ -317,24 +321,28 @@ size_int_t Client::createDaemon(const size_int_t daemonPort, const std::string s
     std::string logstrs = "DAEMON from CLIENT: ";
     std::string colon = ":";
     std::string wrap = "\n";
-    logstrs =  ipbuf + colon + std::to_string(ntohs(raddr.sin_port)) + wrap;
-    write(log_fd, logstrs.c_str(), sizeof(logstrs));
+    logstrs +=  ipbuf + colon + std::to_string(ntohs(raddr.sin_port)) + wrap;
+    // write(log_fd, logstrs.c_str(), sizeof(logstrs));
+    ofs << logstrs;
+    ofs.close();
     // std::cout << "DAEMON from CLIENT: " << ipbuf << ":" << ntohs(raddr.sin_port);
     size_int_t num = read(newsd, buf, BUFSIZE);
     std::string strs(buf, num - 1);
     response(newsd);
     if (strs == "ACTIVE") { // 表明客户端正在进行
       // 需要向服务器请求更新客户端的状态信息
-      puts("发送");
       std::string name("ACTIVE+");
+      // puts("ACCCCC");
+      // std::cout << "ip : " << serverIp << " port : " << serverPort <<std::endl;
       ConnAndDestory(0, serverIp, serverPort, (name + std::to_string(daemonPort)));
     } else if (strs == "UNACTIVE") {
       std::string name("UNACTIVE+");
+      // puts("发送sdfas");
       ConnAndDestory(0, serverIp, serverPort, (name + std::to_string(daemonPort)));
     } else {
       // 客户端测试完成，然后发送结果给服务器
-      std::string name("FINISHED+");
-      ConnAndDestory(0, serverIp, serverPort, (name + std::to_string(daemonPort)));
+      // std::string name("FINISHED+");
+      ConnAndDestory(0, serverIp, serverPort, strs);
     }
   }
   size_int_t state = 0;
