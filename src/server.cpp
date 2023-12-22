@@ -203,33 +203,64 @@ size_int_t Server::distributeTasks(const std::string ip, const size_int_t port, 
         pthread_exit(&state);
     }
     // 打开任务文件以及插件文件，把数据传输给客户端
-    size_int_t task_fd = open(taskPathName.c_str(), O_RDONLY); // 打开文件，写入任务信息
+    std::string name1("../tasks/run/");
+    name1 += taskPathName;
+    // std::string last(".cpp");
+    // name1 += last;
+    size_int_t task_fd = open(name1.c_str(), O_RDONLY); // 打开文件，写入任务信息
     if (task_fd < 0) {
       perror("task-open()");
       size_int_t state = 1;
       pthread_exit(&state);
     }
-    size_int_t plugin_fd = open(pluginPathName.c_str(), O_RDONLY); // 打开文件，写入插件信息
+    std::string name2("../tasks/plugins/");
+    name2 += pluginPathName;
+    size_int_t plugin_fd = open(name2.c_str(), O_RDONLY); // 打开文件，写入插件信息
     if (plugin_fd < 0) {
       perror("plugin-open()");
       size_int_t state = 1;
       pthread_exit(&state);
     }
+    // std::string name3("../tasks/");
+    // name3 += pluginPathName.substr(0, pluginPathName.find_last_of("."));
+    // name3 += ".h";
+    // // std::cout << "name3 = " << name3 << std::endl;
+    // size_int_t h_fd = open(name3.c_str(), O_RDONLY); // 打开文件，写入插件信息
+    // if (h_fd < 0) {
+    //   perror("h-open()");
+    //   size_int_t state = 1;
+    //   pthread_exit(&state);
+    // }
     char buf[BUFSIZE];
     // 发送任务信息
-    sendData(task_fd, "TASK");
-    int num = read(task_fd, buf, BUFSIZE);
+    sendBinaryData(socket_d, "TASK", 4);
+    sendBinaryData(socket_d, taskPathName.c_str(), taskPathName.size());
+    int num = read(task_fd, buf, BUFSIZE - 1);
     while (num) {
-        sendData(task_fd, buf);
-        num = read(task_fd, buf, BUFSIZE);
+        // sendData(socket_d, data);
+        sendBinaryData(socket_d, buf, num);
+        num = read(task_fd, buf, BUFSIZE - 1);
+        // std::string data(buf, 0, num);
     }
     // 发送插件信息
-    sendData(plugin_fd, "PLUGIN");
-    num = read(plugin_fd, buf, BUFSIZE);
+    sendBinaryData(socket_d, "PLUGIN", 6);
+    sendBinaryData(socket_d, pluginPathName.c_str(), pluginPathName.size());
+    num = read(plugin_fd, buf, BUFSIZE - 1);
     while (num) {
-        sendData(plugin_fd, buf);
-        num = read(plugin_fd, buf, BUFSIZE);
+        // sendData(socket_d, data1);
+        sendBinaryData(socket_d, buf, num);
+        num = read(plugin_fd, buf, BUFSIZE - 1);
+        // std::string data1(buf, 0, num);
     }
+    // sendData(socket_d, "H");
+    // num = read(h_fd, buf, BUFSIZE);
+    // std::string data2(buf, 0, num);
+    // while (num) {
+    //     sendData(socket_d, data2);
+    //     num = read(h_fd, buf, BUFSIZE);
+    //     std::string data2(buf, 0, num);
+    // }
+    taskMap[taskPathName].isAssign = 1;
     close(socket_d);
     return 0;
 }
@@ -243,7 +274,9 @@ size_int_t Server::distributeStrategy(const std::string taskPathName, const std:
             // 找到了一个符合条件的客户端
             flag = 1;
             // 给该客户端发送任务具体信息以及插件信息
-            distributeTasks(it.first, it.second.clientPort, taskPathName, pluginPathName);
+            std::string ip = it.first.substr(0, it.first.find_last_of(":"));
+            std::cout << ip << " : " << it.second.clientPort << std::endl;
+            distributeTasks(ip, it.second.clientPort, taskPathName, pluginPathName);
         }
     }
     if (flag == 0) {
@@ -310,7 +343,7 @@ size_int_t Server::RecvResult(const size_int_t recvResultPort){
 
 // 展示所有客户端的状态
 size_int_t Server::getAllStates(){
-    std::cout << "客户端\t\t" << "连接状态\t" << "连接次数\t" << "是否活跃\n";
+    std::cout << "客户端\t\t" << "连接状态\t" << "连接次数\t" << "是否活跃(0: 不活跃, 1: 活跃)\n";
     for (auto it = clientStateMap.begin(); it != clientStateMap.end(); it++){
         std::cout << it->first << "\t" << it->second.linkState << "\t\t" << it->second.linkCount<< "\t\t" << it->second.isBusy << std::endl;
     }
@@ -324,6 +357,19 @@ size_int_t Server::showTasksStates(){
         std::cout << it.first << "\t\t" << it.second.isAssign << "\t\t\t\t" << it.second.isFinished << "\t\t\t" << it.second.pluginName << std::endl;
     }
     return 0;
+}
+
+// 接受客户端发送的更新状态请求
+size_int_t createGetStateThread(Server &server){
+    try {
+        std::thread t(&Server::getStates, &server, 5555);
+        // t.join();
+        t.detach();
+        return 0;
+    }catch (const std::system_error &e) {
+        std::cerr << "Failed to create getstate thread: " << e.what() << std::endl;
+        return 1;
+    }
 }
 
 // 接受客户端主动发送的状态更新请求
@@ -340,6 +386,7 @@ size_int_t Server::getStates(const size_int_t localport){
         size_int_t state = 1;
         pthread_exit(&state);
     }
+    // puts("13579");
     while (true) {
         newsd = accept(socket_d, (struct sockaddr *)&raddr, &len);
         if (sigFlag == 1) {
@@ -354,6 +401,7 @@ size_int_t Server::getStates(const size_int_t localport){
         }
         inet_ntop(AF_INET, &raddr.sin_addr.s_addr, ipbuf, sizeof(ipbuf));
         std::cout << "SERVER from CLIENT: " << ipbuf << ":" << ntohs(raddr.sin_port);
+        std::cout << "ipbuf: " << ipbuf << std::endl; 
         pid = fork();
         if (pid < 0) {
             perror("fork()");
@@ -365,17 +413,24 @@ size_int_t Server::getStates(const size_int_t localport){
             close(socket_d);
             size_int_t num = read(newsd, buf, BUFSIZE);
             std::string strs(buf, num - 1);
+            std::string t = strs.substr(0, strs.find_first_of("+"));
+            std::string name(":");
             if (num == 0) break;
-            if (strs == "ACTIVE") {
+            if (t == "ACTIVE") {
                 // 修改客户端为活跃状态
-                ClientStateNode node = clientStateMap.at(ipbuf);
-                node.isBusy = 1;
-                clientStateMap[ipbuf] = node;
-            }else if (strs == "UNACTIVE"){
+                name = ipbuf + name + strs.substr(strs.find_first_of("+") + 1);
+                std::cout << "name = " << name << std::endl;
+                // ClientStateNode node = clientStateMap.at(name);
+                // node.isBusy = 1;
+                clientStateMap[name].isBusy = 1;
+                std::cout << "node: " << clientStateMap[name].isBusy << std::endl; 
+            }else if (t == "UNACTIVE"){
                 // 修改客户端为不活跃状态
-                ClientStateNode node = clientStateMap.at(ipbuf);
+                name = ipbuf + name + strs.substr(strs.find_first_of("+") + 1);
+                std::cout << "name = " << name << std::endl;
+                ClientStateNode node = clientStateMap.at(name);
                 node.isBusy = 0;
-                clientStateMap[ipbuf] = node;
+                clientStateMap[name] = node;
             }
             exit(0);
         }
@@ -395,6 +450,23 @@ size_int_t createConnThread(Server &server, const size_int_t port){
         std::cerr << "Failed to create thread, which receves the connection and destruction from client: " << e.what() << std::endl;
         return 1;
     }
+}
+
+// 传输二进制数据
+void Server::sendBinaryData(size_int_t socket_d, const char data[BUFSIZE], size_int_t len){
+    char buf[BUFSIZE];
+    for (int i = 0; i < len; i++) {
+        buf[i] = data[i];
+    }
+    buf[len] = '\0';
+    int res = write(socket_d, buf, len + 1);
+    if (res < 0) {
+        perror("write()");
+        size_int_t state = 1;
+        pthread_exit(&state);
+    }
+    read(socket_d, buf, 4);
+    puts(buf);
 }
 
 // 发送数据

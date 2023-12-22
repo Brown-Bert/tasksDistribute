@@ -2,6 +2,7 @@
 #define SERVER_H_
 
 #include <bits/types/sig_atomic_t.h>
+#include <cstdio>
 #include <iostream>
 #include <string>
 #include <map>
@@ -22,7 +23,8 @@ public:
     size_int_t showTasksStates(); // 展示所有任务的状态
     size_int_t getStates(const size_int_t localport); // 接受客户端主动发送的状态更新请求
     size_int_t createChannel(const size_int_t port); // 创建socket套接字IP是定的，需要传端口
-    void sendData(size_int_t socket_d, std::string data); // 发送数据
+    void sendData(size_int_t socket_d, std::string data); // 发送字符数据
+    void sendBinaryData(size_int_t socket_d, const char data[BUFSIZ], size_int_t len); // 传输二进制数据
     void registerSignal(); // 服务器注册信号行为
     void tasksInit(); // 任务初始化
 private:
@@ -50,4 +52,8 @@ void sig_int(size_int_t); // 捕捉信号SIGINT之后，执行自定义的动作
 void sig_quit(size_int_t); // 捕捉信号SIGQUIT之后，执行自定义的动作
 
 size_int_t createConnThread(Server &server, const size_int_t port); // 创建接收客户端连接以及撤销线程, 返回0代表线程创建成功，1代表线程创建失败
+
+size_int_t createGetStateThread(Server &server); // 接受客户端发送的更新状态请求
+
+
 #endif

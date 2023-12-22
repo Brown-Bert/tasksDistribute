@@ -11,13 +11,13 @@
 int main(){
 
     // 加载动态库
-    void* handle = dlopen("./function2.so", RTLD_LAZY);
+    void* handle = dlopen("../plugins/function2.so", RTLD_LAZY);
     if (!handle) {
         fprintf(stderr, "无法打开共享库：%s\n", dlerror());
         exit(1);
     }
 
-    typedef int (*myprint)(const char*);
+    typedef void (*myprint)(std::string);
     // 映射动态库中的计算行数的函数
     myprint print = (myprint)dlsym(handle, "myprint");
     if (!print) {

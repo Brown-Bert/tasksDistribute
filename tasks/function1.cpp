@@ -1,6 +1,6 @@
 #include <cstdlib>
 #include <string>
-#include "../include/function1.h"
+#include "./function1.h"
 
 
 extern "C" void myprint(std::string strs){

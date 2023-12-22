@@ -1,6 +1,7 @@
 #ifndef CLIENT_H_
 #define CLIENT_H_
 
+#include <cstddef>
 #include <iostream>
 #include <string>
 
@@ -16,8 +17,13 @@ public:
     size_int_t acceptTask(const size_int_t port, const char* taskPathName, const char* pluginPathName, const std::string daemonIp, const size_int_t daemonPort); // 客户端接受任务进行测试
     size_int_t createDaemon(const size_int_t daemonPort, const std::string serverIp, const size_int_t serverPort); // 创建守护进程用于检测客户端进程的状态
     void registerSignal();
+    void setIsConnect(int state);
+    int getIsConnect();
 private:
     std::string address; // 客户端的IP地址
+    int isConnect; // 用于标记是否已经和客户端连接过了
+public:
+    int client_port;
 };
 extern size_int_t sigFlag; // 信号变量，信号传递时修改变量，用于终止线程
 void sig_int(size_int_t); // 捕捉信号SIGINT之后，执行自定义的动作
@@ -25,5 +31,8 @@ void sig_quit(size_int_t); // 捕捉信号SIGQUIT之后，执行自定义的动�
 
 // size_int_t createConnThread(Client &client, const size_int_t clientPort, const std::string serverIp, const size_int_t serverPort, const std::string data); // 创建接收客户端连接以及撤销线程, 返回0代表线程创建成功，1代表线程创建失败
 
+size_int_t createDaemonThread(Client &client, int port);
+
+size_int_t createAcceptTasksThread(Client &client, int port);
 
 #endif

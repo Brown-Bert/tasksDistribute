@@ -1,6 +1,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <map>
+#include <string>
 #include "../include/server.h"
 
 
@@ -30,8 +31,10 @@ int main() {
                     std::cout << "服务器已开启" << std::endl;
                     // 查看所有客户端的状态以及所有任务的状态
                     int temp = logout;
+                    std::string taskname;
+                    std::string plugname;
                     while (true) {
-                        std::cout << "1、查看所有客户端的状态\n2、查看所有任务状态\n3、退出\n请输入选择: ";
+                        std::cout << "1、查看所有客户端的状态\n2、查看所有任务状态\n3、任务分发\n4、退出\n请输入选择: ";
                         std::cin >> choice;
                         switch (choice) {
                             case 1:
@@ -41,6 +44,14 @@ int main() {
                                 server.showTasksStates();
                                 break;
                             case 3:
+                                std::cout << "输入任务名称：";
+                                std::cin >> taskname;
+                                std::cout << "输入插件名称：";
+                                std::cin >> plugname;
+                                createGetStateThread(server);
+                                server.distributeStrategy(taskname, plugname);
+                                break;
+                            case 4:
                                 logout = 1;
                                 break;
                             default:

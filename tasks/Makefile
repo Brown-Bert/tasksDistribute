@@ -19,10 +19,10 @@ function2.so : function2.o
 function1.so : function1.o
 	$(CC) $(CFLAGS) -shared -o $(DIR)/$@ $^
 
-function2.o : function2.cpp ../include/function2.h
+function2.o : function2.cpp ./function2.h
 	$(CC) $(CFLAGS) -fpic -c $< -o $@
 
-function1.o : function1.cpp ../include/function1.h
+function1.o : function1.cpp ./function1.h
 	$(CC) $(CFLAGS) -fpic -c $< -o $@
 
 clean : 

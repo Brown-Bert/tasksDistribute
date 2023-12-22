@@ -26,3 +26,4 @@ server.o : server.cpp ../include/server.h
 
 clean : 
 	rm -f *.o
+
