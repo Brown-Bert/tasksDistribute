@@ -138,16 +138,30 @@ void* Server::conn(size_int_t newsd, struct sockaddr_in &raddr){
         // 解锁
         mtx_map.unlock();
     }
-    if (strs == "DESTORY") {
+    std::string split = strs.substr(0, strs.find_first_of("+"));
+    if (split == "DESTORY") {
         // 表示客户端请求撤出
         // 加锁
         response(newsd); // 返回给客户端已收到的信息
         mtx_map.lock();
         std::string colon = ":";
-        std::string name = ipbuf + colon + std::to_string(ntohs(raddr.sin_port));
-        ClientStateNode node = clientStateMap.at(name);
-        node.linkState = 0;
-        clientStateMap[node.name] = node;
+        std::string port = strs.substr(strs.find_first_of("+")+1);
+        std::string name = ipbuf + colon + port;
+        // std::cout << name << std::endl;
+        // ClientStateNode node = clientStateMap.at(name);
+        // node.linkState = 0;
+        clientStateMap[name].linkState = 0;
+        clientStateMap[name].isBusy = 0;
+        // 客户端退出可能意外退出，如果退出之后客户端的任务没有完成，那么就需要将任务转移
+        for (auto it : taskMap) {
+            if (it.second.clientName == name) {
+                if (it.second.isFinished == 0) {
+                    // 客户端退出，任务没有完成
+                    // 任务转移（重新分派任务）
+                    distributeStrategy(it.first, it.second.pluginName);
+                }
+            }
+        }
         // 解锁
         mtx_map.unlock();
     }
@@ -276,7 +290,9 @@ size_int_t Server::distributeStrategy(const std::string taskPathName, const std:
             // 给该客户端发送任务具体信息以及插件信息
             std::string ip = it.first.substr(0, it.first.find_last_of(":"));
             // std::cout << ip << " : " << it.second.clientPort << std::endl;
+            taskMap[taskPathName].clientName = it.first;
             distributeTasks(ip, it.second.clientPort, taskPathName, pluginPathName);
+            break;
         }
     }
     if (flag == 0) {
@@ -352,9 +368,9 @@ size_int_t Server::getAllStates(){
 
 // 展示所有任务的状态
 size_int_t Server::showTasksStates(){
-    std::cout << "任务\t" << "分配状态(0:未分配,1:已分配)\t完成状态(0:未完成,1:已完成)\t插件名" << std::endl;
+    std::cout << "任务\t" << "分配状态(0:未分配,1:已分配)\t完成状态(0:未完成,1:已完成)\t插件名\t\t分配的客户端" << std::endl;
     for (auto it : taskMap) {
-        std::cout << it.first << "\t\t" << it.second.isAssign << "\t\t\t\t" << it.second.isFinished << "\t\t\t" << it.second.pluginName << std::endl;
+        std::cout << it.first << "\t\t" << it.second.isAssign << "\t\t\t\t" << it.second.isFinished << "\t\t\t" << it.second.pluginName << "\t" << it.second.clientName << std::endl;
     }
     return 0;
 }

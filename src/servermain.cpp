@@ -33,6 +33,7 @@ int main() {
                     int temp = logout;
                     std::string taskname;
                     std::string plugname;
+                    createGetStateThread(server);
                     while (true) {
                         std::cout << "1、查看所有客户端的状态\n2、查看所有任务状态\n3、任务分发\n4、退出\n请输入选择: ";
                         std::cin >> choice;
@@ -48,7 +49,6 @@ int main() {
                                 std::cin >> taskname;
                                 std::cout << "输入插件名称：";
                                 std::cin >> plugname;
-                                createGetStateThread(server);
                                 server.distributeStrategy(taskname, plugname);
                                 break;
                             case 4:

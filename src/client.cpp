@@ -88,6 +88,7 @@ size_int_t Client::createChannel(const size_int_t port){
         inet_pton(AF_INET, address.c_str(), &laddr.sin_addr.s_addr);
         if (bind(socket_d, (const struct sockaddr *)&laddr, sizeof(laddr)) < 0) {
             perror("bind()");
+            std::cout << "port: " << port << std::endl;
             size_int_t state = 1;
             pthread_exit(&state);
         }
@@ -146,7 +147,7 @@ void Client::sendData(size_int_t socket_d, std::string data){
 }
 
 // 客户端接受任务进行测试
-size_int_t Client::acceptTask(const size_int_t port, const char* taskPathName, const char* pluginPathName, const std::string daemonIp, const size_int_t daemonPort){
+size_int_t Client::acceptTask(const size_int_t port, const std::string daemonIp, const size_int_t daemonPort){
   struct sockaddr_in raddr; // 记录服务器的连接信息，例如服务器的ip以及端口
   socklen_t len = sizeof(raddr);
   size_int_t newsd;
@@ -154,6 +155,19 @@ size_int_t Client::acceptTask(const size_int_t port, const char* taskPathName, c
   char buf[BUFSIZE];
   char ipbuf[IPSIZE]; // 用于记录请求连接的服务端的ip从二进制转成字符串
   size_int_t socket_d = createChannel(port);
+  acceptTaskSocketD = socket_d;
+  // 设置套接字为非阻塞模式
+  int flags = fcntl(socket_d, F_GETFL, 0);
+  if (flags < 0) {
+      perror("fcntl()");
+      size_int_t state = 1;
+      pthread_exit(&state);
+  }
+  if (fcntl(socket_d, F_SETFL, flags | O_NONBLOCK) < 0) {
+      perror("fcntl()");
+      size_int_t state = 1;
+      pthread_exit(&state);
+  }
   if (listen(socket_d, 5) < 0) { // 之所以把listen放在这里，是为了复用createChannel函数
       perror("listen()");
       size_int_t state = 1;
@@ -161,46 +175,34 @@ size_int_t Client::acceptTask(const size_int_t port, const char* taskPathName, c
   }
   while (true) { // 服务器可能会一直发送任务
     newsd = accept(socket_d, (struct sockaddr *)&raddr, &len); 
-    if (sigFlag == 1) {
-      perror("accept()"); // 打断了accept系统调用，accept会报错，检验是否报错
-      close(socket_d);
-      break;
-    }
     if (newsd < 0) {
-      perror("accept()");
-      size_int_t state = 1;
-      pthread_exit(&state);
+      // 非阻塞调用accept()返回EAGAIN或EWOULDBLOCK表示没有新连接
+      if ((errno == EAGAIN) || (errno == EWOULDBLOCK)) {
+          // 没有新连接，继续循环
+          // std::cout << "task" << std::endl;
+          if (sigFlag == 1) break;
+          continue;
+      } else {
+          perror("accept");
+          exit(1);
+      }
     }
     // 执行测试之前需要发送信息更新当前客户端的状态
     ConnAndDestory(0, daemonIp, daemonPort, "ACTIVE");
 
     inet_ntop(AF_INET, &raddr.sin_addr.s_addr, ipbuf, sizeof(ipbuf));
-    // std::cout << "CLIENT from SERVER: " << ipbuf << ":" << ntohs(raddr.sin_port);
     size_int_t flag = -1; // 用于标记当前收到的信息是具体的任务信息（0），还是传输的是插件信息（1）
     std::string taskName("./run/");
     std::string pluName("./plugins/");
-    // taskName = taskName + taskPathName;
-    // std::cout << "taskName: " << taskName << std::endl;
-    // std::string last = ".cpp";
     size_int_t task_fd, plugin_fd;
-    // std::string hName("./");
-    // hName = hName + "function.h";
-    // size_int_t h_fd = open(hName.c_str(), O_WRONLY | O_CREAT, 0644); // 打开文件，写入插件信息
-    // if (h_fd < 0) {
-    //   perror("h-open()");
-    //   size_int_t state = 1;
-    //   pthread_exit(&state);
-    // }
     while (true) { // 不停地接受来自服务器的数据
       size_int_t num = read(newsd, buf, BUFSIZE);
       response(newsd);
       if (num == 0) {
-        // puts("跳出");
         break; // 任务具体信息以及插件信息接收完成
       }
       std::string strs(buf, num - 1);
       if (strs == "TASK") {
-        // puts("TASK");
         flag = 0;
         size_int_t num = read(newsd, buf, BUFSIZE);
         response(newsd);
@@ -216,10 +218,8 @@ size_int_t Client::acceptTask(const size_int_t port, const char* taskPathName, c
         continue;
       }
       if (strs == "PLUGIN") {
-        // puts("PLUGIN");
         flag = 1;
         size_int_t num = read(newsd, buf, BUFSIZE);
-        // std::cout << "mum= " << num << std::endl;
         response(newsd);
         std::string strs(buf, num - 1);
         pluName += strs;
@@ -231,42 +231,25 @@ size_int_t Client::acceptTask(const size_int_t port, const char* taskPathName, c
         }
         continue;
       }
-      // if (strs == "H"){
-      //   flag = 2;
-      //   continue;
-      // }
       if (flag == 0) {
         // 接收到的消息是具体的任务消息
         // 操作。。。。
-        // std::cout << strs << std::endl;
-        // std::cout << "mum: " << num << std::endl;
         write(task_fd, buf, num - 1);
       }else if (flag == 1) {
         // 接收到的消息是插件数据
         // 要把该数据全部写入到文件中
-        // std::cout << "mum= " << num << std::endl;
         write(plugin_fd, buf, num - 1);
       } else {
         // 接受h头文件
-        // write(h_fd, buf, num - 1);
       }
     }
-    // std::cout << "654321" << std::endl;
     close(task_fd);
     close(plugin_fd);
     // 编译任务信息
-    // std::string task("g++ -o taskmain ");
-    // task += taskName;
-    // task += last;
-    // task += " -ldl";
-    // if (std::system("make") != 0) {
-    //   fprintf(stderr, "编译失败\n");
-    //   size_int_t state = 1;
-    //   pthread_exit(&state);
-    // }
     
     // 执行程序
-    // std::cout << taskName << std::endl;
+    std::string temp(" ");
+    temp += taskName;
     taskName = taskName.substr(taskName.find_last_of("/"));
     std::string n("cd run && .");
     taskName = n + taskName;
@@ -277,22 +260,37 @@ size_int_t Client::acceptTask(const size_int_t port, const char* taskPathName, c
       pthread_exit(&state);
     }
     // 测试任务完成
-    std::system("rm ./plugins/* && rm ./run/*");
+    std::string rmcommand("rm ");
+    rmcommand = rmcommand + pluName + temp;
+    std::system(rmcommand.c_str());
     ConnAndDestory(0, daemonIp, daemonPort, "UNACTIVE");
     ConnAndDestory(0, daemonIp, daemonPort, resName);
   }
-  // std::cout << "123456" << std::endl;
+  close(socket_d);
   size_int_t state = 0;
   pthread_exit(&state);
 }
 // 创建守护进程用于检测客户端进程的状态
-size_int_t Client::createDaemon(const size_int_t daemonPort, const std::string serverIp, const size_int_t serverPort){
+size_int_t Client::createDaemon(const size_int_t sendPort, const size_int_t daemonPort, const std::string serverIp, const size_int_t serverPort){
   struct sockaddr_in raddr; // 记录客户端的连接信息，例如客户端的ip以及端口
   socklen_t len = sizeof(raddr);
   size_int_t newsd;
   char buf[BUFSIZE];
   char ipbuf[IPSIZE]; // 用于记录请求连接的客户端的ip从二进制转成字符串
-  size_int_t socket_d = createChannel(4444);
+  size_int_t socket_d = createChannel(daemonPort);
+
+  // 设置套接字为非阻塞模式
+  int flags = fcntl(socket_d, F_GETFL, 0);
+  if (flags < 0) {
+      perror("fcntl()");
+      size_int_t state = 1;
+      pthread_exit(&state);
+  }
+  if (fcntl(socket_d, F_SETFL, flags | O_NONBLOCK) < 0) {
+      perror("fcntl()");
+      size_int_t state = 1;
+      pthread_exit(&state);
+  }
   if (listen(socket_d, 5) < 0) { // 之所以把listen放在这里，是为了复用createChannel函数
       perror("listen()");
       size_int_t state = 1;
@@ -307,15 +305,17 @@ size_int_t Client::createDaemon(const size_int_t daemonPort, const std::string s
   while (true) {
     newsd = accept(socket_d, (struct sockaddr *)&raddr, &len); // 只需要accept一次，并不需要一直aceept，因为服务器不会一直请求连接客户端
     // std::cout << "dem con" << std::endl;
-    if (sigFlag == 1) {
-        perror("accept()"); // 打断了accept系统调用，accept会报错，检验是否报错
-        close(socket_d);
-        break;
-    }
     if (newsd < 0) {
-        perror("accept()");
-        size_int_t state = 1;
-        pthread_exit(&state);
+      // 非阻塞调用accept()返回EAGAIN或EWOULDBLOCK表示没有新连接
+      if ((errno == EAGAIN) || (errno == EWOULDBLOCK)) {
+          // 没有新连接，继续循环
+          // std::cout << "daemon" << std::endl;
+          if (sigFlag == 1) break;
+          continue;
+      } else {
+          perror("accept");
+          exit(1);
+      }
     }
     inet_ntop(AF_INET, &raddr.sin_addr.s_addr, ipbuf, sizeof(ipbuf));
     std::string logstrs = "DAEMON from CLIENT: ";
@@ -334,17 +334,18 @@ size_int_t Client::createDaemon(const size_int_t daemonPort, const std::string s
       std::string name("ACTIVE+");
       // puts("ACCCCC");
       // std::cout << "ip : " << serverIp << " port : " << serverPort <<std::endl;
-      ConnAndDestory(0, serverIp, serverPort, (name + std::to_string(daemonPort)));
+      ConnAndDestory(0, serverIp, serverPort, (name + std::to_string(sendPort)));
     } else if (strs == "UNACTIVE") {
       std::string name("UNACTIVE+");
       // puts("发送sdfas");
-      ConnAndDestory(0, serverIp, serverPort, (name + std::to_string(daemonPort)));
+      ConnAndDestory(0, serverIp, serverPort, (name + std::to_string(sendPort)));
     } else {
       // 客户端测试完成，然后发送结果给服务器
       // std::string name("FINISHED+");
       ConnAndDestory(0, serverIp, serverPort, strs);
     }
   }
+  close(socket_d);
   size_int_t state = 0;
   pthread_exit(&state);
 }
@@ -368,9 +369,9 @@ int Client::getIsConnect(){
 }
 
 
-size_int_t createDaemonThread(Client &client, int port){
+size_int_t createDaemonThread(Client &client, size_int_t sendPort, size_int_t daemonPort){
   try {
-      std::thread t(&Client::createDaemon, &client, port, "127.0.0.1", 5555);
+      std::thread t(&Client::createDaemon, &client, sendPort, daemonPort, "127.0.0.1", 5555);
       // t.join();
       t.detach();
       return 0;
@@ -380,9 +381,9 @@ size_int_t createDaemonThread(Client &client, int port){
   }
 }
 
-size_int_t createAcceptTasksThread(Client &client, int port){
+size_int_t createAcceptTasksThread(Client &client, size_int_t port, size_int_t daemonPort){
   try {
-      std::thread t(&Client::acceptTask, &client, port, "task", "function.cpp", "127.0.0.1", 4444);
+      std::thread t(&Client::acceptTask, &client, port, "127.0.0.1", daemonPort);
       // t.join();
       t.detach();
       return 0;

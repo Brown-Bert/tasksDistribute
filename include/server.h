@@ -43,6 +43,7 @@ private:
         int isAssign = 0; // 任务是否发放，0表示还没有发放， 1表示以及发放
         int isFinished = 0; // 任务是否完成，0表示任务还没有完成，1表示任务完成
         std::string pluginName; // 该任务需要的插件的名字
+        std::string clientName; // 任务分派之后的客户端
     } TASK;
     std::vector<std::string> tasksLists;
     std::map<std::string, TASK> taskMap;
